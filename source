@@ -1,878 +1,660 @@
+// Decompiled by Jad v1.5.8e. Copyright 2001 Pavel Kouznetsov.
+// Jad home page: http://www.geocities.com/kpdus/jad.html
+// Decompiler options: packimports(5) braces fieldsfirst noctor nonlb space lnc 
 
-/*
- *   This program is free software: you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation, either version 3 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+package weka.classifiers.bayes;
 
-/*
- *    WeightedClassifier.java
- *    Copyright (C) 2004 Stefan Mutter
- *
- */
-package weka.classifiers.rules.car;
-
-import java.util.ArrayList;
+import java.io.PrintStream;
 import java.util.Enumeration;
 import java.util.Vector;
-
-import weka.associations.AbstractAssociator;
-import weka.associations.Associator;
-import weka.associations.CARuleMiner;
-import weka.associations.classification.CrNode;
-import weka.associations.classification.CrTree;
-import weka.associations.classification.PrecedencePruning;
-import weka.associations.classification.PruneCAR;
-import weka.classifiers.rules.car.utils.Stopwatch;
-import weka.core.AdditionalMeasureProducer;
-import weka.core.Capabilities;
-import weka.core.Capabilities.Capability;
-import weka.core.CapabilitiesHandler;
-import weka.core.FastVector;
-import weka.core.Instance;
-import weka.core.Instances;
-import weka.core.Option;
-import weka.core.OptionHandler;
-import weka.core.RevisionUtils;
-import weka.core.SelectedTag;
-import weka.core.Tag;
-import weka.core.Utils;
+import weka.classifiers.Classifier;
+import weka.classifiers.bayes.net.ADNode;
+import weka.classifiers.bayes.net.BIFReader;
+import weka.classifiers.bayes.net.ParentSet;
+import weka.classifiers.bayes.net.estimate.BayesNetEstimator;
+import weka.classifiers.bayes.net.estimate.DiscreteEstimatorBayes;
+import weka.classifiers.bayes.net.estimate.SimpleEstimator;
+import weka.classifiers.bayes.net.search.SearchAlgorithm;
+import weka.classifiers.bayes.net.search.local.K2;
+import weka.classifiers.bayes.net.search.local.LocalScoreSearchAlgorithm;
+import weka.core.*;
+import weka.estimators.Estimator;
 import weka.filters.Filter;
 import weka.filters.supervised.attribute.Discretize;
+import weka.filters.unsupervised.attribute.ReplaceMissingValues;
 
-/**
- * Class implemting three different weighted classifiers for class association
- * rules. a) all rules are weighted equally with weight one (default behaviour).
- * b) all rules are weighted linearly c) all rules are weighted using the
- * inverse function 1/position in sort order of mining algorithm
- * 
- * The pruning step is omitted. All mined rules are used for classifcation, if
- * not specified otherwise with the -L option.
- * 
- * Valid options are:
- * <p>
- * 
- * -A Class Association Rule Miner String <br>
- * Class Association Rule Miner String should contain the full class name of a
- * scheme included for selection followed by options to the Class Association
- * Rule Miner.
- * <p>
- * 
- * -W weighting scheme <br>
- * Sets the weighting scheme: inverse|linear|equal (default).
- * <p>
- * 
- * -L rule limit<br>
- * Set a rule limit for the number of rules used for classification after the
- * pruning step. Uses the first N rules only.
- * <p>
- * 
- * 
- * @author Stefan Mutter
- * @version $Revision$
- */
+public class BayesNet extends Classifier
+    implements OptionHandler, WeightedInstancesHandler, Drawable, AdditionalMeasureProducer {
 
-public class WeightedClassifier extends CarClassifier implements OptionHandler,
-  AdditionalMeasureProducer, CapabilitiesHandler {
+    static final long serialVersionUID = 0xa5a751a1a947992L;
+    protected ParentSet m_ParentSets[];
+    public Estimator m_Distributions[][];
+    protected Discretize m_DiscretizeFilter;
+    int m_nNonDiscreteAttribute;
+    protected ReplaceMissingValues m_MissingValuesFilter;
+    protected int m_NumClasses;
+    public Instances m_Instances;
+    ADNode m_ADTree;
+    protected BIFReader m_otherBayesNet;
+    boolean m_bUseADTree;
+    SearchAlgorithm m_SearchAlgorithm;
+    BayesNetEstimator m_BayesNetEstimator;
 
-  /** For serialization */
-  static final long serialVersionUID = -7484303771900257946L;
-
-  /** The pruning algorithm. */
-  private final PrecedencePruning m_prune = new weka.associations.classification.PrecedencePruning();
-
-  /** The mining algorithm. */
-  // private CARuleMiner m_assoc = new
-  // weka.associations.classification.CarApriori();
-  private CARuleMiner m_assoc = new weka.associations.Apriori();
-
-  /** The instances. */
-  private Instances m_instances;
-
-  protected static final int EQUAL = 0;
-  protected static final int INVERSE = 1;
-  protected static final int LINEAR = 2;
-
-  public static final Tag[] TAGS_SELECTION = { new Tag(EQUAL, "Equal"),
-    new Tag(INVERSE, "Inverse"), new Tag(LINEAR, "Linear") };
-
-  /** The type string for the weighting scheme. */
-  // private String m_weightScheme = "equal";
-  private int m_weightScheme = 0;
-
-  /** The metric type string. */
-  private String m_metricType;
-
-  /** Watch for mining runtime behaviour. */
-  private Stopwatch m_miningWatch;
-
-  /** Watch for pruning runtime behaviour. */
-  private Stopwatch m_pruningWatch;
-
-  /** The number of mined rules. */
-  private int m_numMinedRules;
-
-  /** The number of rules after pruning. */
-  private int m_numPrunedRules;
-
-  /**
-   * The limit for the number of classification rules after pruning. -1
-   * indicates no limit. Valid integers are >= 1.
-   */
-  private int m_numRules = -1;
-
-  /** The number of rules for classification. */
-  private int m_stop;
-
-  /** The mining time. */
-  private double m_miningTime;
-
-  /** The filter to discretise attribute values. */
-  private Discretize m_filter;
-
-  /** The pruning time. */
-  private double m_pruningTime;
-
-  /**
-   * The average rank of the first rule that covers an instance and predicts it
-   * correctly.
-   */
-  private double m_averageCorrect;
-
-  /** The average rank of the first rule that covers an instance. */
-  private double m_averageFirst;
-
-  /**
-   * The sum of the rank of the first rule that covers an instance and predicts
-   * it correctly.
-   */
-  private double m_sumCorrect;
-
-  /** The sum of the rank of the first rule that covers an instance. */
-  private double m_sumFirst;
-
-  /** The number of instances. */
-  private int m_numInstances;
-
-  /** The number of test instances. */
-  private int m_numTests;
-
-  /**
-   * Returns default capabilities of the base associator.
-   * 
-   * @return the capabilities of the base classifier
-   */
-  @Override
-  public Capabilities getCapabilities() {
-    Capabilities result;
-
-    if (getCarMiner() != null && getCarMiner() instanceof CapabilitiesHandler) {
-      result = ((CapabilitiesHandler) getCarMiner()).getCapabilities();
-      result.disable(Capability.NO_CLASS);
-    } else {
-      result = new Capabilities(this);
-      result.disableAll();
+    public BayesNet() {
+        m_DiscretizeFilter = null;
+        m_nNonDiscreteAttribute = -1;
+        m_MissingValuesFilter = null;
+        m_otherBayesNet = null;
+        m_bUseADTree = false;
+        m_SearchAlgorithm = new K2();
+        m_BayesNetEstimator = new SimpleEstimator();
     }
 
-    // set dependencies
-    for (Capability cap : Capability.values()) {
-      result.enableDependency(cap);
+    public Capabilities getCapabilities() {
+        Capabilities capabilities = super.getCapabilities();
+        capabilities.enable(weka.core.Capabilities.Capability.NOMINAL_ATTRIBUTES);
+        capabilities.enable(weka.core.Capabilities.Capability.NUMERIC_ATTRIBUTES);
+        capabilities.enable(weka.core.Capabilities.Capability.MISSING_VALUES);
+        capabilities.enable(weka.core.Capabilities.Capability.NOMINAL_CLASS);
+        capabilities.enable(weka.core.Capabilities.Capability.MISSING_CLASS_VALUES);
+        capabilities.setMinimumNumberInstances(0);
+        return capabilities;
     }
 
-    result.setOwner(this);
-
-    return result;
-  }
-
-  /**
-   * Gets a description of WeightedClassifier
-   * 
-   * @return a description of WeightedClassifier
-   */
-  public String globalInfo() {
-
-    return "Classifier that weights a set of class association rules. That are association rules where exclusively one class attribute-value-pair is allowed in the consequence."
-      + "\nNo pruning is perfomed (except that the number of mined rules can be limited and from that set the user can choose to consider only the top ranked rules with the -L option). For classification there are three options:"
-      + "\na) all rules are equally weighted with 1 (default)"
-      + "\nb) all rules are linearly weighted in a decreasing manner according to the sort order of the mining algorithm"
-      + "\nc) all rules are weighted with the inverse function 1/rank in sort order.";
-  }
-
-  /**
-   * Returns an enumeration describing the available options
-   * 
-   * @return an enumeration of all the available options
-   */
-  @Override
-  public Enumeration listOptions() {
-
-    FastVector newVector = new FastVector(3);
-
-    newVector.addElement(new Option(
-      "\tFull class name of class association rule miner to include, followed\n"
-        + "\tby scheme options.\n"
-        + "\teg: \"weka.associations.classification.CarApriori -N 100\"", "A",
-      1, "-A <class association rule miner specification>"));
-
-    newVector.addElement(new Option(
-      "\tThe type of the weighting function: inverse | linear | equal (default)\n"
-        + "\teg: -T linear", "W", 1, "-W <weighting scheme>"));
-    newVector
-      .addElement(new Option(
-        "\tThe number of rules used for classification (default: all left after pruning) \n",
-        "L", 1, "-L <number of rules>"));
-
-    return newVector.elements();
-  }
-
-  /**
-   * Parses a given list of options. Valid options are:
-   * <p>
-   * 
-   * 
-   * -A Class Association Rule Miner String <br>
-   * Class Association Rule Miner String should contain the full class name of a
-   * scheme included for selection followed by options to the Class Association
-   * Rule Miner.
-   * <p>
-   * 
-   * -W weighting scheme <br>
-   * Sets the weighting scheme: inverse|linear|equal (default).
-   * <p>
-   * 
-   * -L rule limit<br>
-   * Set a rule limit for the number of rules used for classification after the
-   * pruning step. Uses the first N rules only.
-   * <p>
-   * 
-   * 
-   * @param options the list of options as an array of strings
-   * @exception Exception if an option is not supported
-   */
-  @Override
-  public void setOptions(String[] options) throws Exception {
-
-    String assocString = Utils.getOption('A', options);
-    if (assocString.length() > 0) {
-      // throw new Exception("Asociation Rule Miner must be specified");
-      // }
-      String[] assocSpec = Utils.splitOptions(assocString);
-      if (assocSpec.length == 0) {
-        throw new Exception(
-          "Invalid Asociation Rule Miner specification string");
-      }
-      String assocName = assocSpec[0];
-      assocSpec[0] = "";
-      Associator toUse = (AbstractAssociator.forName(assocName, assocSpec));
-      if (!(toUse instanceof CARuleMiner)) {
-        throw new Exception(
-          "Association Rule Miner has to be able to mine classification association rules");
-      }
-      setCarMiner((CARuleMiner) toUse);
+    public void buildClassifier(Instances instances) throws Exception {
+        getCapabilities().testWithFail(instances);
+        instances = new Instances(instances);
+        instances.deleteWithMissingClass();
+        instances = normalizeDataSet(instances);
+        m_Instances = new Instances(instances);
+        m_NumClasses = instances.numClasses();
+        if (m_bUseADTree) {
+            m_ADTree = ADNode.makeADTree(instances);
+        }
+        initStructure();
+        buildStructure();
+        estimateCPTs();
+        m_ADTree = null;
     }
 
-    String ws = Utils.getOption('W', options);
-    if (ws.length() > 0) {
-      if (ws.equalsIgnoreCase("inverse")) {
-        setWeightScheme(new SelectedTag(INVERSE, TAGS_SELECTION));
-      } else if (ws.equalsIgnoreCase("linear")) {
-        setWeightScheme(new SelectedTag(LINEAR, TAGS_SELECTION));
-      } else {
-        // default
-        setWeightScheme(new SelectedTag(EQUAL, TAGS_SELECTION));
-      }
-    }
-    /*
-     * m_weightScheme = Utils.getOption('W',options);
-     * if(!m_weightScheme.equalsIgnoreCase("inverse") &&
-     * !m_weightScheme.equalsIgnoreCase("linear")) m_weightScheme = "equal";
-     */
-
-    String numRulesString = Utils.getOption('L', options);
-    if (numRulesString.length() != 0) {
-      m_numRules = Integer.parseInt(numRulesString);
-    } else {
-      m_numRules = -1;
-    }
-
-    Utils.checkForRemainingOptions(options);
-  }
-
-  /**
-   * Gets the current settings of the Classifier.
-   * 
-   * @return an array of strings suitable for passing to setOptions
-   */
-  @Override
-  public String[] getOptions() {
-
-    String[] options = new String[10];
-    int current = 0;
-
-    options[current++] = "-A";
-    options[current++] = "" + getAssocSpec();
-
-    options[current++] = "-L";
-    options[current++] = "" + m_numRules;
-
-    options[current++] = "-W";
-    options[current++] = "" + getWeightScheme().getSelectedTag().getReadable();
-
-    while (current < options.length) {
-      options[current++] = "";
-    }
-    return options;
-  }
-
-  /**
-   * Gets the options for the class association rule miner
-   * 
-   * @return string with the options
-   */
-  protected String getAssocSpec() {
-
-    if (m_assoc instanceof OptionHandler) {
-      return m_assoc.getClass().getName() + " "
-        + Utils.joinOptions(((OptionHandler) m_assoc).getOptions());
-    }
-    return m_assoc.getClass().getName();
-  }
-
-  /**
-   * Gets the tipText for this option.
-   * 
-   * @return the tipText for this option.
-   */
-  public String carMinerTipText() {
-
-    return "The class association rule miner with its options.";
-  }
-
-  /**
-   * Sets the class association rule miner
-   * 
-   * @param assoc the class association rule miner
-   */
-  public void setCarMiner(CARuleMiner assoc) {
-
-    m_assoc = assoc;
-  }
-
-  /**
-   * Gets the class association rule miner
-   * 
-   * @return the class association rule miner
-   */
-  public CARuleMiner getCarMiner() {
-
-    return m_assoc;
-  }
-
-  /**
-   * Gets the pruning algorithm: PrecedencePruning
-   * 
-   * @return the pruning algorithm
-   */
-  public PruneCAR getPrune() {
-
-    return m_prune;
-  }
-
-  /**
-   * Generates the classifier.
-   * 
-   * @param newInstances set of instances serving as training data
-   * @exception Exception if the classifier has not been generated successfully
-   */
-  @Override
-  public void buildClassifier(Instances newInstances) throws Exception {
-
-    ArrayList<Object>[] allRules;
-    FastVector limRules1 = new FastVector(), limRules2 = new FastVector(), limRules3 = new FastVector();
-    Instances instancesNoClass, instancesOnlyClass;
-
-    boolean needsDisc = false;
-    for (int i = 0; i < newInstances.numAttributes(); i++) {
-      if (i != newInstances.classIndex()
-        && newInstances.attribute(i).isNumeric()) {
-        needsDisc = true;
-        break;
-      }
-    }
-
-    Instances instances = newInstances;
-    if (needsDisc) {
-      m_filter = new Discretize();
-      m_filter.setInputFormat(newInstances);
-      instances = Filter.useFilter(newInstances, m_filter);
-    } else {
-      m_filter = null;
-    }
-    m_instances = instances;
-    getCapabilities().testWithFail(instances);
-
-    m_averageCorrect = 0;
-    m_averageFirst = 0;
-    m_sumCorrect = 0;
-    m_sumFirst = 0;
-    m_numTests = 0;
-
-    m_numInstances = m_instances.numInstances();
-    m_miningWatch = new Stopwatch();
-    m_miningWatch.start();
-    m_assoc.setClassIndex(m_instances.classIndex() + 1);
-    allRules = m_assoc.mineCARs(m_instances);
-    // System.out.println(m_assoc);
-    m_numMinedRules = allRules[0].size();
-    instancesNoClass = m_assoc.getInstancesNoClass();
-    instancesOnlyClass = m_assoc.getInstancesOnlyClass();
-    m_metricType = m_assoc.metricString();
-    m_miningTime = m_miningWatch.getSeconds();
-    m_miningWatch.stop();
-    m_pruningWatch = new Stopwatch();
-    m_pruningWatch.start();
-    m_prune.setNoPessPruning(true);
-    m_prune.setInstancesNoClass(instancesNoClass);
-    m_prune.setInstancesOnlyClass(instancesOnlyClass);
-    if (m_numRules > 0 && allRules[0].size() > m_numRules) {
-      m_stop = m_numRules;
-      for (int i = 0; i < m_stop; i++) {
-        limRules1.addElement(allRules[0].get(i));
-        limRules2.addElement(allRules[1].get(i));
-        limRules3.addElement(allRules[2].get(i));
-      }
-      m_prune.preprocess(limRules1, limRules2, limRules3);
-    } else {
-      m_stop = allRules[0].size();
-      m_prune.preprocess(allRules[0], allRules[1], allRules[2]);
-    }
-    if (!(m_prune.isEmpty())) {
-      m_prune.prune();
-    }
-    m_numPrunedRules = m_stop - m_prune.prunedRules();
-    m_pruningTime = m_pruningWatch.getSeconds();
-    m_pruningWatch.stop();
-    m_instances = new Instances(instances, 0);
-
-  }
-
-  /**
-   * Returns the class distribution for an instance
-   * 
-   * @param newInstance the instance
-   * @throws Exception exception if it cannot be calculated
-   * @return the class distribution
-   */
-  @Override
-  public double[] distributionForInstance(Instance newInstance)
-    throws Exception {
-
-    CrTree pruneTree = new CrTree();
-    pruneTree = m_prune;
-
-    Instance instance = newInstance;
-
-    if (m_filter != null) {
-      if (m_filter.numPendingOutput() > 0) {
-        throw new Exception("Filter output queue not empty!");
-      }
-
-      if (!m_filter.input(newInstance)) {
-        throw new Exception("Filter didn't make the test instance"
-          + " immediately available!");
-      }
-      m_filter.batchFinished();
-      instance = m_filter.output();
-    }
-
-    FastVector treeNodes, classify = sortAttributes(m_instances, instance,
-      pruneTree);
-    boolean checkEquals = false, pathOk = false;
-    int attNum, attValue, size = classify.size();
-    boolean firstFound = false;
-    FastVector list = m_prune.getPrecedenceList();
-    int k = 0;
-    m_averageFirst = 0;
-    m_averageCorrect = 0;
-    m_numTests++;
-
-    // calculate average ranks
-    out: while (k < list.size() && !firstFound && size > 0) {
-      CrNode start = (CrNode) list.elementAt(k);
-      int index = size - 1;
-      do {
-        do {
-          attNum = ((Integer) classify.elementAt(index - 1)).intValue();
-          attValue = ((Integer) classify.elementAt(index)).intValue();
-          if (!instance.isMissing(attNum) && start.equals(attNum, attValue)) {
-            checkEquals = true;
-          }
-          index = index - 2;
-        } while (index > 0 && (!(start.equals(attNum, attValue))));
-        if (checkEquals) {
-          while (start.getTreeParent() == null) {
-            start = start.getLastSibling();
-          }
-          start = start.getTreeParent();
-          if (start == m_prune.getRoot()) {
-            m_averageFirst = k + 1;
-            int predictedClass = m_prune.getClassValue(k);
-            if (predictedClass == (int) instance.value(instance.classIndex())) {
-              firstFound = true;
-              m_averageCorrect = k + 1;
-              break out;
+    protected Instances normalizeDataSet(Instances instances) throws Exception {
+        m_DiscretizeFilter = null;
+        m_MissingValuesFilter = null;
+        boolean flag = false;
+        boolean flag1 = false;
+        for (Enumeration enumeration = instances.enumerateAttributes(); enumeration.hasMoreElements();) {
+            Attribute attribute = (Attribute)enumeration.nextElement();
+            if (attribute.type() != 1) {
+                m_nNonDiscreteAttribute = attribute.index();
+                flag = true;
             }
-          }
-          checkEquals = false;
-        } else {
-          start = null;
-        }
-      } while (start != null && index > 0);
-      k++;
-
-    }
-    if (m_averageCorrect == 0) {
-      if ((int) instance.value(instance.classIndex()) == m_prune
-        .getDefaultClass()) {
-        m_averageCorrect = m_prune.numPrunedRules() + 1;
-      } else {
-        m_averageCorrect = m_prune.numPrunedRules() + 2;
-      }
-    }
-    if (m_averageFirst == 0) {
-      m_averageFirst = m_prune.numPrunedRules() + 1;
-    }
-    m_sumFirst += m_averageFirst;
-    m_sumCorrect += m_averageCorrect;
-
-    // calculate distribution
-    double sum = 0;
-    double[] classDistribution = new double[m_instances.numClasses()], temp = new double[m_instances
-      .numClasses()];
-    ;
-    CrNode start;
-
-    for (int i = 0; i < classDistribution.length; i++) {
-      classDistribution[i] = 0;
-      temp[i] = 0;
-    }
-
-    if (pruneTree.isEmpty()) {
-      classDistribution[pruneTree.getDefaultClass()] = 1;
-      return classDistribution;
-    }
-    treeNodes = new FastVector();
-    treeNodes.addElement((pruneTree.getRoot()).getTreeChild());
-    while (treeNodes.size() != 0 && size > 0) {
-      start = (CrNode) treeNodes.firstElement();
-      treeNodes.removeElementAt(0);
-      int index = 0;
-      do {
-        if ((start.getNextSibling()).getTreeParent() == null) {
-          treeNodes.addElement(start.getNextSibling());
-        }
-
-        do {
-          attNum = ((Integer) classify.elementAt(index)).intValue();
-          attValue = ((Integer) classify.elementAt(index + 1)).intValue();
-          if (!instance.isMissing(attNum) && start.equals(attNum, attValue)) {
-            checkEquals = true;
-            for (int j = 0; j < (start.getContent()).size(); j++) {
-              int classAtt = ((Integer) ((FastVector) (start.getContent())
-                .elementAt(j)).firstElement()).intValue();
-              temp[classAtt] = temp[classAtt]
-                + weight(getWeightScheme().getSelectedTag().getReadable(),
-                  ((Double) ((FastVector) (start.getContent()).elementAt(j))
-                    .elementAt(3)).doubleValue());
-              pathOk = true;
+            Enumeration enumeration1 = instances.enumerateInstances();
+            while (enumeration1.hasMoreElements())  {
+                if (((Instance)enumeration1.nextElement()).isMissing(attribute)) {
+                    flag1 = true;
+                }
             }
-          }
-          index = index + 2;
-        } while (index < size && (!(start.equals(attNum, attValue))));
-        if (checkEquals) {
-          start = start.getTreeChild();
-          checkEquals = false;
+        }
+
+        if (flag) {
+            System.err.println("Warning: discretizing data set");
+            m_DiscretizeFilter = new Discretize();
+            m_DiscretizeFilter.setInputFormat(instances);
+            instances = Filter.useFilter(instances, m_DiscretizeFilter);
+        }
+        if (flag1) {
+            System.err.println("Warning: filling in missing values in data set");
+            m_MissingValuesFilter = new ReplaceMissingValues();
+            m_MissingValuesFilter.setInputFormat(instances);
+            instances = Filter.useFilter(instances, m_MissingValuesFilter);
+        }
+        return instances;
+    }
+
+    protected Instance normalizeInstance(Instance instance) throws Exception {
+        if (m_DiscretizeFilter != null && instance.attribute(m_nNonDiscreteAttribute).type() != 1) {
+            m_DiscretizeFilter.input(instance);
+            instance = m_DiscretizeFilter.output();
+        }
+        if (m_MissingValuesFilter != null) {
+            m_MissingValuesFilter.input(instance);
+            instance = m_MissingValuesFilter.output();
         } else {
-          start = null;
+            for (int i = 0; i < m_Instances.numAttributes(); i++) {
+                if (i != instance.classIndex() && instance.isMissing(i)) {
+                    System.err.println("Warning: Found missing value in test set, filling in values.");
+                    m_MissingValuesFilter = new ReplaceMissingValues();
+                    m_MissingValuesFilter.setInputFormat(m_Instances);
+                    Filter.useFilter(m_Instances, m_MissingValuesFilter);
+                    m_MissingValuesFilter.input(instance);
+                    instance = m_MissingValuesFilter.output();
+                    i = m_Instances.numAttributes();
+                }
+            }
+
         }
-      } while (start != null && index < size);
-      for (int i = 0; i < temp.length; i++) {
-        if (pathOk) {
-          classDistribution[i] = classDistribution[i] + temp[i];
-          sum = sum + temp[i];
+        return instance;
+    }
+
+    public void initStructure() throws Exception {
+        int i = 0;
+        for (int j = 1; j < m_Instances.numAttributes(); j++) {
+            if (i == m_Instances.classIndex()) {
+                i++;
+            }
         }
-        temp[i] = 0;
-      }
-      pathOk = false;
+
+        m_ParentSets = new ParentSet[m_Instances.numAttributes()];
+        for (int k = 0; k < m_Instances.numAttributes(); k++) {
+            m_ParentSets[k] = new ParentSet(m_Instances.numAttributes());
+        }
+
     }
-    if (sum != 0) {
-      Utils.normalize(classDistribution, sum);
-    } else {
-      classDistribution[pruneTree.getDefaultClass()] = 1;
+
+    public void buildStructure() throws Exception {
+        m_SearchAlgorithm.buildStructure(this, m_Instances);
     }
-    return classDistribution;
-  }
 
-  /**
-   * Gets the tipText for this option.
-   * 
-   * @return the tipText for this option.
-   */
-  public String weightSchemeTipText() {
-
-    return "Specify the type of the weighting scheme: equal(default)|linear|invers"
-      + "\nEqual weights all instances equally with 1, linear uses a linear weighting function depending on the sort order of the mining algorithm, and"
-      + "\ninverse uses the inverse function 1/(rank in the sort order).";
-  }
-
-  /**
-   * Sets the weighting scheme
-   * 
-   * @param type the type of the weighting scheme: inverse | linear | equal
-   */
-  public void setWeightScheme(SelectedTag type) {
-
-    /*
-     * m_weightScheme = type; if(!m_weightScheme.equalsIgnoreCase("inverse") &&
-     * !m_weightScheme.equalsIgnoreCase("linear")) m_weightScheme = "equal";
-     */
-    m_weightScheme = type.getSelectedTag().getID();
-  }
-
-  /**
-   * Gets the type of the weighting scheme
-   * 
-   * @return type of the weighting scheme: inverse | linear | equal
-   */
-  public SelectedTag getWeightScheme() {
-
-    // return m_weightScheme;
-    return new SelectedTag(m_weightScheme, TAGS_SELECTION);
-  }
-
-  /**
-   * Gets the tipText for this option.
-   * 
-   * @return the tipText for this option.
-   */
-  public String ruleLimitTipText() {
-
-    return "If set to -1 or 0, all rules in the pruned rule set are used for classification (default), otherwise it uses the specified number of top ranked rules in the pruned rule set.";
-  }
-
-  /**
-   * Sets a rule limit. Only the first n rules after pruning are then used for
-   * classification (-1 means no limit).
-   * 
-   * @param n the rule limit
-   */
-  public void setRuleLimit(int n) {
-
-    m_numRules = n;
-  }
-
-  /**
-   * Gets the rule limit (-1 means no limit)
-   * 
-   * @return the rule limit
-   */
-  public int getRuleLimit() {
-
-    return m_numRules;
-  }
-
-  /**
-   * Weights a rule
-   * 
-   * @return the weight of a rule
-   * @param type the weighting scheme
-   * @param rank the rank of the rule in the sort order
-   */
-  public double weight(String type, double rank) {
-    if (type.equalsIgnoreCase("inverse")) {
-      return 1.0 / (rank + 1);
+    public void estimateCPTs() throws Exception {
+        m_BayesNetEstimator.estimateCPTs(this);
     }
-    if (type.equalsIgnoreCase("linear")) {
-      return 1 - ((1.0 / (m_stop + 1)) * rank);
+
+    public void initCPTs() throws Exception {
+        m_BayesNetEstimator.initCPTs(this);
     }
-    return 1;
-  }
 
-  /**
-   * Prints the rules
-   * 
-   * @return the rules
-   */
-  @Override
-  public String toString() {
-
-    StringBuffer text = new StringBuffer();
-    text.append(m_prune.toString(m_metricType, (int) measureNumMinedRules()));
-    text.append("Mining Time in sec.: " + measureMiningTime() + "\n");
-    text.append("Pruning Time in sec. : " + measurePruningTime());
-    text.append("\n");
-    text.append("The used weighting scheme: ");
-
-    if (getWeightScheme().getSelectedTag().getReadable()
-      .equalsIgnoreCase("inverse")) {
-      text.append("inverse\n");
-    } else {
-      if (getWeightScheme().getSelectedTag().getReadable()
-        .equalsIgnoreCase("linear")) {
-        text.append("linear\n");
-      } else {
-        text.append("equally weighted with 1\n\n");
-      }
+    public void updateClassifier(Instance instance) throws Exception {
+        instance = normalizeInstance(instance);
+        m_BayesNetEstimator.updateClassifier(this, instance);
     }
-    return text.toString();
-  }
 
-  /**
-   * Lists all additional statistics that are available
-   * 
-   * @return list of the names of the additional measures
-   */
-  @Override
-  public Enumeration enumerateMeasures() {
-    Vector newVector = new Vector(5);
-    newVector.addElement("measureMiningTime");
-    newVector.addElement("measurePruningTime");
-    newVector.addElement("measureNumMinedRules");
-    newVector.addElement("measureNumRulesAfterAddPruning");
-    newVector.addElement("measureNumClassRules");
-    newVector.addElement("measureAverageRankFirstRuleFires");
-    newVector.addElement("measureAverageRankFirstCorrectRule");
-    return newVector.elements();
-  }
-
-  /**
-   * Gets the additional statistics
-   * 
-   * @param additionalMeasureName the name of the additional measure
-   * @return the value of the measure
-   */
-  @Override
-  public double getMeasure(String additionalMeasureName) {
-    if (additionalMeasureName.compareTo("measureMiningTime") == 0) {
-      return measureMiningTime();
-    } else if (additionalMeasureName.compareTo("measurePruningTime") == 0) {
-      return measurePruningTime();
-    } else if (additionalMeasureName.compareTo("measureNumMinedRules") == 0) {
-      return measureNumMinedRules();
-    } else if (additionalMeasureName
-      .compareTo("measureNumRulesAfterAddPruning") == 0) {
-      return measureNumPrunedRules();
-    } else if (additionalMeasureName.compareTo("measureNumClassRules") == 0) {
-      return measureNumClassRules();
-    } else if (additionalMeasureName
-      .compareTo("measureAverageRankFirstRuleFires") == 0) {
-      return measureAverageRankFires();
-    } else if (additionalMeasureName
-      .compareTo("measureAverageRankFirstCorrectRule") == 0) {
-      return measureAverageRankCorrect();
-    } else {
-      throw new IllegalArgumentException(additionalMeasureName
-        + " not supported (CBA)");
+    public double[] distributionForInstance(Instance instance) throws Exception {
+        instance = normalizeInstance(instance);
+        return m_BayesNetEstimator.distributionForInstance(this, instance);
     }
-  }
 
-  /**
-   * Gets the mining time
-   * 
-   * @return the mining time in seconds
-   */
-  public double measureMiningTime() {
+    public double[] countsForInstance(Instance instance) throws Exception {
+        double ad[] = new double[m_NumClasses];
+        for (int i = 0; i < m_NumClasses; i++) {
+            ad[i] = 0.0D;
+        }
 
-    return m_miningTime;
-  }
+        for (int j = 0; j < m_NumClasses; j++) {
+            double d = 0.0D;
+            for (int k = 0; k < m_Instances.numAttributes(); k++) {
+                double d1 = 0.0D;
+                for (int l = 0; l < m_ParentSets[k].getNrOfParents(); l++) {
+                    int i1 = m_ParentSets[k].getParent(l);
+                    if (i1 == m_Instances.classIndex()) {
+                        d1 = d1 * (double)m_NumClasses + (double)j;
+                    } else {
+                        d1 = d1 * (double)m_Instances.attribute(i1).numValues() + instance.value(i1);
+                    }
+                }
 
-  /**
-   * Gets the pruning time in seconds
-   * 
-   * @return the pruning time in seconds
-   */
-  public double measurePruningTime() {
+                if (k == m_Instances.classIndex()) {
+                    d += ((DiscreteEstimatorBayes)m_Distributions[k][(int)d1]).getCount(j);
+                } else {
+                    d += ((DiscreteEstimatorBayes)m_Distributions[k][(int)d1]).getCount(instance.value(k));
+                }
+            }
 
-    return m_pruningTime;
-  }
+            ad[j] += d;
+        }
 
-  /**
-   * Gets the number of mined rules
-   * 
-   * @return the number of mined rules
-   */
-  public double measureNumMinedRules() {
+        return ad;
+    }
 
-    return m_numMinedRules;
-  }
+    public Enumeration listOptions() {
+        Vector vector = new Vector(4);
+        vector.addElement(new Option("\tDo not use ADTree data structure\n", "D", 0, "-D"));
+        vector.addElement(new Option("\tBIF file to compare with\n", "B", 1, "-B <BIF file>"));
+        vector.addElement(new Option("\tSearch algorithm\n", "Q", 1, "-Q weka.classifiers.bayes.net.search.SearchAlgorithm"));
+        vector.addElement(new Option("\tEstimator algorithm\n", "E", 1, "-E weka.classifiers.bayes.net.estimate.SimpleEstimator"));
+        return vector.elements();
+    }
 
-  /**
-   * Gets the number of rules after the optional pruning step
-   * 
-   * @return the number of rules after the optional pruning step
-   */
-  public double measureNumPrunedRules() {
+    public void setOptions(String as[]) throws Exception {
+        m_bUseADTree = !Utils.getFlag('D', as);
+        String s = Utils.getOption('B', as);
+        if (s != null && !s.equals("")) {
+            setBIFFile(s);
+        }
+        String s1 = Utils.getOption('Q', as);
+        if (s1.length() != 0) {
+            setSearchAlgorithm((SearchAlgorithm)Utils.forName(weka/classifiers/bayes/net/search/SearchAlgorithm, s1, partitionOptions(as)));
+        } else {
+            setSearchAlgorithm(new K2());
+        }
+        String s2 = Utils.getOption('E', as);
+        if (s2.length() != 0) {
+            setEstimator((BayesNetEstimator)Utils.forName(weka/classifiers/bayes/net/estimate/BayesNetEstimator, s2, Utils.partitionOptions(as)));
+        } else {
+            setEstimator(new SimpleEstimator());
+        }
+        Utils.checkForRemainingOptions(as);
+    }
 
-    return m_prune.numPrunedRules();
-  }
+    public static String[] partitionOptions(String as[]) {
+        for (int i = 0; i < as.length; i++) {
+            if (as[i].equals("--")) {
+                for (int j = i; j < as.length && !as[j].equals("-E"); j++) { }
+                as[i++] = "";
+                String as1[] = new String[as.length - i];
+                int k;
+                for (k = i; k < as.length && !as[k].equals("-E"); k++) {
+                    as1[k - i] = as[k];
+                    as[k] = "";
+                }
 
-  /**
-   * Gets the number of rules used for classification
-   * 
-   * @return the number of rules used for classification
-   */
-  public double measureNumClassRules() {
+                for (; k < as.length; k++) {
+                    as1[k - i] = "";
+                }
 
-    return m_prune.numPrunedRules();
-  }
+                return as1;
+            }
+        }
 
-  /**
-   * Gets the average rank of the first rule that covers an instance and
-   * predicts it correctly.
-   * 
-   * @return the average rank of the first rule that covers an instance and
-   *         predicts it correctly.
-   */
-  public double measureAverageRankFires() {
+        return new String[0];
+    }
 
-    return m_sumFirst / m_numTests;
-  }
+    public String[] getOptions() {
+        String as[] = m_SearchAlgorithm.getOptions();
+        String as1[] = m_BayesNetEstimator.getOptions();
+        String as2[] = new String[11 + as.length + as1.length];
+        int i = 0;
+        if (!m_bUseADTree) {
+            as2[i++] = "-D";
+        }
+        if (m_otherBayesNet != null) {
+            as2[i++] = "-B";
+            as2[i++] = m_otherBayesNet.getFileName();
+        }
+        as2[i++] = "-Q";
+        as2[i++] = (new StringBuilder()).append("").append(getSearchAlgorithm().getClass().getName()).toString();
+        as2[i++] = "--";
+        for (int j = 0; j < as.length; j++) {
+            as2[i++] = as[j];
+        }
 
-  /**
-   * Gets the average rank of the first rule that covers an instance.
-   * 
-   * @return the average rank of the first rule that covers an instance.
-   */
-  public double measureAverageRankCorrect() {
+        as2[i++] = "-E";
+        as2[i++] = (new StringBuilder()).append("").append(getEstimator().getClass().getName()).toString();
+        as2[i++] = "--";
+        for (int k = 0; k < as1.length; k++) {
+            as2[i++] = as1[k];
+        }
 
-    return m_sumCorrect / m_numTests;
-  }
+        while (i < as2.length)  {
+            as2[i++] = "";
+        }
+        return as2;
+    }
 
-  /**
-   * Returns the revision string.
-   * 
-   * @return the revision
-   */
-  @Override
-  public String getRevision() {
-    return RevisionUtils.extract("$Revision$");
-  }
+    public void setSearchAlgorithm(SearchAlgorithm searchalgorithm) {
+        m_SearchAlgorithm = searchalgorithm;
+    }
 
-  /**
-   * Main method for testing this class.
-   * 
-   * @param argv the options
-   */
-  public static void main(String[] argv) {
-    runClassifier(new WeightedClassifier(), argv);
-  }
+    public SearchAlgorithm getSearchAlgorithm() {
+        return m_SearchAlgorithm;
+    }
+
+    public void setEstimator(BayesNetEstimator bayesnetestimator) {
+        m_BayesNetEstimator = bayesnetestimator;
+    }
+
+    public BayesNetEstimator getEstimator() {
+        return m_BayesNetEstimator;
+    }
+
+    public void setUseADTree(boolean flag) {
+        m_bUseADTree = flag;
+    }
+
+    public boolean getUseADTree() {
+        return m_bUseADTree;
+    }
+
+    public void setBIFFile(String s) {
+        try {
+            m_otherBayesNet = (new BIFReader()).processFile(s);
+        }
+        catch (Throwable throwable) {
+            m_otherBayesNet = null;
+        }
+    }
+
+    public String getBIFFile() {
+        if (m_otherBayesNet != null) {
+            return m_otherBayesNet.getFileName();
+        } else {
+            return "";
+        }
+    }
+
+    public String toString() {
+        StringBuffer stringbuffer = new StringBuffer();
+        stringbuffer.append("Bayes Network Classifier");
+        stringbuffer.append((new StringBuilder()).append("\n").append(m_bUseADTree ? "Using " : "not using ").append("ADTree").toString());
+        if (m_Instances == null) {
+            stringbuffer.append(": No model built yet.");
+        } else {
+            stringbuffer.append("\n#attributes=");
+            stringbuffer.append(m_Instances.numAttributes());
+            stringbuffer.append(" #classindex=");
+            stringbuffer.append(m_Instances.classIndex());
+            stringbuffer.append("\nNetwork structure (nodes followed by parents)\n");
+            for (int i = 0; i < m_Instances.numAttributes(); i++) {
+                stringbuffer.append((new StringBuilder()).append(m_Instances.attribute(i).name()).append("(").append(m_Instances.attribute(i).numValues()).append("): ").toString());
+                for (int j = 0; j < m_ParentSets[i].getNrOfParents(); j++) {
+                    stringbuffer.append((new StringBuilder()).append(m_Instances.attribute(m_ParentSets[i].getParent(j)).name()).append(" ").toString());
+                }
+
+                stringbuffer.append("\n");
+            }
+
+            stringbuffer.append((new StringBuilder()).append("LogScore Bayes: ").append(measureBayesScore()).append("\n").toString());
+            stringbuffer.append((new StringBuilder()).append("LogScore BDeu: ").append(measureBDeuScore()).append("\n").toString());
+            stringbuffer.append((new StringBuilder()).append("LogScore MDL: ").append(measureMDLScore()).append("\n").toString());
+            stringbuffer.append((new StringBuilder()).append("LogScore ENTROPY: ").append(measureEntropyScore()).append("\n").toString());
+            stringbuffer.append((new StringBuilder()).append("LogScore AIC: ").append(measureAICScore()).append("\n").toString());
+            if (m_otherBayesNet != null) {
+                stringbuffer.append((new StringBuilder()).append("Missing: ").append(m_otherBayesNet.missingArcs(this)).append(" Extra: ").append(m_otherBayesNet.extraArcs(this)).append(" Reversed: ").append(m_otherBayesNet.reversedArcs(this)).append("\n").toString());
+                stringbuffer.append((new StringBuilder()).append("Divergence: ").append(m_otherBayesNet.divergence(this)).append("\n").toString());
+            }
+        }
+        return stringbuffer.toString();
+    }
+
+    public int graphType() {
+        return 2;
+    }
+
+    public String graph() throws Exception {
+        return toXMLBIF03();
+    }
+
+    public String getBIFHeader() {
+        StringBuffer stringbuffer = new StringBuffer();
+        stringbuffer.append("<?xml version=\"1.0\"?>\n");
+        stringbuffer.append("<!-- DTD for the XMLBIF 0.3 format -->\n");
+        stringbuffer.append("<!DOCTYPE BIF [\n");
+        stringbuffer.append("\t<!ELEMENT BIF ( NETWORK )*>\n");
+        stringbuffer.append("\t      <!ATTLIST BIF VERSION CDATA #REQUIRED>\n");
+        stringbuffer.append("\t<!ELEMENT NETWORK ( NAME, ( PROPERTY | VARIABLE | DEFINITION )* )>\n");
+        stringbuffer.append("\t<!ELEMENT NAME (#PCDATA)>\n");
+        stringbuffer.append("\t<!ELEMENT VARIABLE ( NAME, ( OUTCOME |  PROPERTY )* ) >\n");
+        stringbuffer.append("\t      <!ATTLIST VARIABLE TYPE (nature|decision|utility) \"nature\">\n");
+        stringbuffer.append("\t<!ELEMENT OUTCOME (#PCDATA)>\n");
+        stringbuffer.append("\t<!ELEMENT DEFINITION ( FOR | GIVEN | TABLE | PROPERTY )* >\n");
+        stringbuffer.append("\t<!ELEMENT FOR (#PCDATA)>\n");
+        stringbuffer.append("\t<!ELEMENT GIVEN (#PCDATA)>\n");
+        stringbuffer.append("\t<!ELEMENT TABLE (#PCDATA)>\n");
+        stringbuffer.append("\t<!ELEMENT PROPERTY (#PCDATA)>\n");
+        stringbuffer.append("]>\n");
+        return stringbuffer.toString();
+    }
+
+    public String toXMLBIF03() {
+        if (m_Instances == null) {
+            return "<!--No model built yet-->";
+        }
+        StringBuffer stringbuffer = new StringBuffer();
+        stringbuffer.append(getBIFHeader());
+        stringbuffer.append("\n");
+        stringbuffer.append("\n");
+        stringbuffer.append("<BIF VERSION=\"0.3\">\n");
+        stringbuffer.append("<NETWORK>\n");
+        stringbuffer.append((new StringBuilder()).append("<NAME>").append(XMLNormalize(m_Instances.relationName())).append("</NAME>\n").toString());
+        for (int i = 0; i < m_Instances.numAttributes(); i++) {
+            stringbuffer.append("<VARIABLE TYPE=\"nature\">\n");
+            stringbuffer.append((new StringBuilder()).append("<NAME>").append(XMLNormalize(m_Instances.attribute(i).name())).append("</NAME>\n").toString());
+            for (int k = 0; k < m_Instances.attribute(i).numValues(); k++) {
+                stringbuffer.append((new StringBuilder()).append("<OUTCOME>").append(XMLNormalize(m_Instances.attribute(i).value(k))).append("</OUTCOME>\n").toString());
+            }
+
+            stringbuffer.append("</VARIABLE>\n");
+        }
+
+        for (int j = 0; j < m_Instances.numAttributes(); j++) {
+            stringbuffer.append("<DEFINITION>\n");
+            stringbuffer.append((new StringBuilder()).append("<FOR>").append(XMLNormalize(m_Instances.attribute(j).name())).append("</FOR>\n").toString());
+            for (int l = 0; l < m_ParentSets[j].getNrOfParents(); l++) {
+                stringbuffer.append((new StringBuilder()).append("<GIVEN>").append(XMLNormalize(m_Instances.attribute(m_ParentSets[j].getParent(l)).name())).append("</GIVEN>\n").toString());
+            }
+
+            stringbuffer.append("<TABLE>\n");
+            for (int i1 = 0; i1 < m_ParentSets[j].getCardinalityOfParents(); i1++) {
+                for (int j1 = 0; j1 < m_Instances.attribute(j).numValues(); j1++) {
+                    stringbuffer.append(m_Distributions[j][i1].getProbability(j1));
+                    stringbuffer.append(' ');
+                }
+
+                stringbuffer.append('\n');
+            }
+
+            stringbuffer.append("</TABLE>\n");
+            stringbuffer.append("</DEFINITION>\n");
+        }
+
+        stringbuffer.append("</NETWORK>\n");
+        stringbuffer.append("</BIF>\n");
+        return stringbuffer.toString();
+    }
+
+    protected String XMLNormalize(String s) {
+        StringBuffer stringbuffer = new StringBuffer();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+            case 38: // '&'
+                stringbuffer.append("&amp;");
+                break;
+
+            case 39: // '\''
+                stringbuffer.append("&apos;");
+                break;
+
+            case 34: // '"'
+                stringbuffer.append("&quot;");
+                break;
+
+            case 60: // '<'
+                stringbuffer.append("&lt;");
+                break;
+
+            case 62: // '>'
+                stringbuffer.append("&gt;");
+                break;
+
+            default:
+                stringbuffer.append(c);
+                break;
+            }
+        }
+
+        return stringbuffer.toString();
+    }
+
+    public String useADTreeTipText() {
+        return "When ADTree (the data structure for increasing speed on counts, not to be confused with the classifier under the same name) is used learning time goes down typically. However, because ADTrees are memory intensive, memory problems may occur. Switching this option off makes the structure learning algorithms slower, and run with less memory. By default, ADTrees are used.";
+    }
+
+    public String searchAlgorithmTipText() {
+        return "Select method used for searching network structures.";
+    }
+
+    public String estimatorTipText() {
+        return "Select Estimator algorithm for finding the conditional probability tables of the Bayes Network.";
+    }
+
+    public String BIFFileTipText() {
+        return "Set the name of a file in BIF XML format. A Bayes network learned from data can be compared with the Bayes network represented by the BIF file. Statistics calculated are o.a. the number of missing and extra arcs.";
+    }
+
+    public String globalInfo() {
+        return "Bayes Network learning using various search algorithms and quality measures.\nBase class for a Bayes Network classifier. Provides datastructures (network structure, conditional probability distributions, etc.) and facilities common to Bayes Network learning algorithms like K2 and B.\n\nFor more information see:\n\nhttp://www.cs.waikato.ac.nz/~remco/weka.pdf";
+    }
+
+    public static void main(String args[]) {
+        runClassifier(new BayesNet(), args);
+    }
+
+    public String getName() {
+        return m_Instances.relationName();
+    }
+
+    public int getNrOfNodes() {
+        return m_Instances.numAttributes();
+    }
+
+    public String getNodeName(int i) {
+        return m_Instances.attribute(i).name();
+    }
+
+    public int getCardinality(int i) {
+        return m_Instances.attribute(i).numValues();
+    }
+
+    public String getNodeValue(int i, int j) {
+        return m_Instances.attribute(i).value(j);
+    }
+
+    public int getNrOfParents(int i) {
+        return m_ParentSets[i].getNrOfParents();
+    }
+
+    public int getParent(int i, int j) {
+        return m_ParentSets[i].getParent(j);
+    }
+
+    public ParentSet[] getParentSets() {
+        return m_ParentSets;
+    }
+
+    public Estimator[][] getDistributions() {
+        return m_Distributions;
+    }
+
+    public int getParentCardinality(int i) {
+        return m_ParentSets[i].getCardinalityOfParents();
+    }
+
+    public double getProbability(int i, int j, int k) {
+        return m_Distributions[i][j].getProbability(k);
+    }
+
+    public ParentSet getParentSet(int i) {
+        return m_ParentSets[i];
+    }
+
+    public ADNode getADTree() {
+        return m_ADTree;
+    }
+
+    public Enumeration enumerateMeasures() {
+        Vector vector = new Vector(4);
+        vector.addElement("measureExtraArcs");
+        vector.addElement("measureMissingArcs");
+        vector.addElement("measureReversedArcs");
+        vector.addElement("measureDivergence");
+        vector.addElement("measureBayesScore");
+        vector.addElement("measureBDeuScore");
+        vector.addElement("measureMDLScore");
+        vector.addElement("measureAICScore");
+        vector.addElement("measureEntropyScore");
+        return vector.elements();
+    }
+
+    public double measureExtraArcs() {
+        if (m_otherBayesNet != null) {
+            return (double)m_otherBayesNet.extraArcs(this);
+        } else {
+            return 0.0D;
+        }
+    }
+
+    public double measureMissingArcs() {
+        if (m_otherBayesNet != null) {
+            return (double)m_otherBayesNet.missingArcs(this);
+        } else {
+            return 0.0D;
+        }
+    }
+
+    public double measureReversedArcs() {
+        if (m_otherBayesNet != null) {
+            return (double)m_otherBayesNet.reversedArcs(this);
+        } else {
+            return 0.0D;
+        }
+    }
+
+    public double measureDivergence() {
+        if (m_otherBayesNet != null) {
+            return m_otherBayesNet.divergence(this);
+        } else {
+            return 0.0D;
+        }
+    }
+
+    public double measureBayesScore() {
+        LocalScoreSearchAlgorithm localscoresearchalgorithm = new LocalScoreSearchAlgorithm(this, m_Instances);
+        return localscoresearchalgorithm.logScore(0);
+    }
+
+    public double measureBDeuScore() {
+        LocalScoreSearchAlgorithm localscoresearchalgorithm = new LocalScoreSearchAlgorithm(this, m_Instances);
+        return localscoresearchalgorithm.logScore(1);
+    }
+
+    public double measureMDLScore() {
+        LocalScoreSearchAlgorithm localscoresearchalgorithm = new LocalScoreSearchAlgorithm(this, m_Instances);
+        return localscoresearchalgorithm.logScore(2);
+    }
+
+    public double measureAICScore() {
+        LocalScoreSearchAlgorithm localscoresearchalgorithm = new LocalScoreSearchAlgorithm(this, m_Instances);
+        return localscoresearchalgorithm.logScore(4);
+    }
+
+    public double measureEntropyScore() {
+        LocalScoreSearchAlgorithm localscoresearchalgorithm = new LocalScoreSearchAlgorithm(this, m_Instances);
+        return localscoresearchalgorithm.logScore(3);
+    }
+
+    public double getMeasure(String s) {
+        if (s.equals("measureExtraArcs")) {
+            return measureExtraArcs();
+        }
+        if (s.equals("measureMissingArcs")) {
+            return measureMissingArcs();
+        }
+        if (s.equals("measureReversedArcs")) {
+            return measureReversedArcs();
+        }
+        if (s.equals("measureDivergence")) {
+            return measureDivergence();
+        }
+        if (s.equals("measureBayesScore")) {
+            return measureBayesScore();
+        }
+        if (s.equals("measureBDeuScore")) {
+            return measureBDeuScore();
+        }
+        if (s.equals("measureMDLScore")) {
+            return measureMDLScore();
+        }
+        if (s.equals("measureAICScore")) {
+            return measureAICScore();
+        }
+        if (s.equals("measureEntropyScore")) {
+            return measureEntropyScore();
+        } else {
+            return 0.0D;
+        }
+    }
+
+    public String getRevision() {
+        return RevisionUtils.extract("$Revision: 1.33 $");
+    }
 }
