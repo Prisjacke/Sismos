@@ -21,4 +21,10 @@ Para ejecutar el código fuente hay q usar el api de weka, Para poder ejecutar e
 
 # Como ejecutar el source-mapreduce
 
+1.- Se configura las variable de entrada con el archivo y con los datos del sismo.
+2.- Se compila 
+3.- Se procede a ejecutar el código fuente 
+4.- se configura la variable con la q se va a trabajar 
+5.- Y al final se obtiene el resultado en la carpeta de output
+
 
