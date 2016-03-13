@@ -1,4 +1,4 @@
-package com.magsol.bigdata.hw7;
+
 
 import java.io.DataInput;
 import java.io.DataOutput;
