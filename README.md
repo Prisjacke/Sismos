@@ -7,13 +7,13 @@ Por todo ello se necesita disponer de varias aplicaciones que permitan procesar 
 
 Para ejecutar el código fuente hay q usar el api de weka, Para poder ejecutar el aplicativo hay que ejecutar el archivo .jar, O compilar el código fuente:
 
-1.- ir a clasificador
+1.- Ir a clasificador
 
 2.- Seleccionar el archivo de los datos
 
 3.- Una vez cargado el archivo
 
-4.- Seleccionaremos las variables con las q deseamos trabajar
+4.- Seleccionaremos las variables con las que deseamos trabajar
 
 5.- Seleccionamos una de las variables y empezamos el análisis
 
@@ -27,7 +27,7 @@ Para ejecutar el código fuente hay q usar el api de weka, Para poder ejecutar e
 
 3.- Se procede a ejecutar el código fuente 
 
-4.- se configura la variable con la q se va a trabajar 
+4.- se configura la variable con la que se va a trabajar 
 
 5.- Y al final se obtiene el resultado en la carpeta de output
 
