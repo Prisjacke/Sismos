@@ -1,4 +1,4 @@
-package com.magsol.bigdata.hw7;
+
 
 import java.io.IOException;
 import java.util.Vector;
