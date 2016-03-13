@@ -8,8 +8,17 @@ Por todo ello se necesita disponer de varias aplicaciones que permitan procesar 
 Para ejecutar el código fuente hay q usar el api de weka, Para poder ejecutar el aplicativo hay que ejecutar el archivo .jar, O compilar el código fuente:
 
 1.- ir a clasificador
+
 2.- Seleccionar el archivo de los datos
+
 3.- Una vez cargado el archivo
+
 4.- Seleccionaremos las variables con las q deseamos trabajar
+
 5.- Seleccionamos una de las variables y empezamos el análisis
+
 6.- Al final nos dará un valor Predictivo que representa el valor probable a ocurrir
+
+# Como ejecutar el source-mapreduce
+
+
