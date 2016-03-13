@@ -5,7 +5,8 @@ Esto se lo podria realizar por medio de algoritmos de la inteligencia computacio
 Por todo ello se necesita disponer de varias aplicaciones que permitan procesar la información para obtener una serie de datos de los cuales se pueda obtener un beneficio. Nuestra información recabada es muy valorada respecto a que por medio de ella podemos controlar, optimizar, administrar, investigar, planificar, predecir o tomar decisiones.
 # Como ejecutar el source
 
-Para ejecutar el código fuente hay q usar el api de weka, Para poder ejecutar el aplicativo hay que ejecutar el archivo .jar, O compilar el código fuente
+Para ejecutar el código fuente hay q usar el api de weka, Para poder ejecutar el aplicativo hay que ejecutar el archivo .jar, O compilar el código fuente:
+
 1.- ir a clasificador
 2.- Seleccionar el archivo de los datos
 3.- Una vez cargado el archivo
